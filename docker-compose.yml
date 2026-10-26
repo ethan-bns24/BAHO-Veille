@@ -1,0 +1,18 @@
+services:
+  veille:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./settings.toml:/app/settings.toml:ro
+    restart: unless-stopped
+  dashboard:
+    build: .
+    command: ["baho-veille", "serve", "--host", "0.0.0.0", "--port", "8080"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./settings.toml:/app/settings.toml:ro
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

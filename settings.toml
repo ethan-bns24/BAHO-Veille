@@ -1,0 +1,57 @@
+# Copy this file to a protected environment for production values.
+[app]
+database_path = "data/veille.sqlite3"
+poll_interval_minutes = 30
+lookback_days = 5
+log_level = "INFO"
+
+[notification]
+# Alerts are sent only when a tender reaches this score. All tenders remain stored.
+minimum_score = 35
+recipients = []
+
+[scoring]
+keyword_weight = 30
+geography_weight = 15
+amount_weight = 15
+deadline_weight = 15
+information_weight = 10
+service_weight = 15
+minimum_response_days = 5
+interesting_amount_eur = 20000
+
+# Complete these entries before deploying. Departement codes and city names are both supported.
+[[hotels]]
+name = "À compléter"
+city = ""
+department = ""
+capacity = 0
+services = ["hébergement", "séminaire", "restauration"]
+
+# BOAMP uses the official DILA open-data API and is ready to run.
+[[sources]]
+name = "boamp"
+kind = "boamp"
+enabled = true
+# Safety cap per poll. Results are paginated and filtered server-side by the BAHO query.
+limit = 500
+
+# The following adapters are deliberately disabled until their official flux/API URL
+# and terms of use have been validated. They accept RSS/Atom or JSON feeds.
+[[sources]]
+name = "place"
+kind = "feed"
+enabled = false
+url = ""
+
+[[sources]]
+name = "france_marches"
+kind = "feed"
+enabled = false
+url = ""
+
+[[sources]]
+name = "aws_achat"
+kind = "feed"
+enabled = false
+url = ""
