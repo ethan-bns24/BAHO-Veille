@@ -20,13 +20,189 @@ service_weight = 15
 minimum_response_days = 5
 interesting_amount_eur = 20000
 
-# Complete these entries before deploying. Departement codes and city names are both supported.
+# Établissements identifiés dans le document officiel « Découvrez nos adresses ».
+# Les capacités non publiées restent à 0 : elles n'excluent aucune opportunité.
 [[hotels]]
-name = "À compléter"
-city = ""
-department = ""
+name = "Campanile Avallon"
+city = "Sauvigny-le-Bois"
+department = "89"
 capacity = 0
-services = ["hébergement", "séminaire", "restauration"]
+services = ["hébergement"]
+
+[[hotels]]
+name = "Campanile Evry Est Saint-Germain-les-Corbeil"
+city = "Saint-Germain-lès-Corbeil"
+department = "91"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Fougères"
+city = "Fougères"
+department = "35"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Grenoble Nord Moirans"
+city = "Moirans"
+department = "38"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Mâcon Sud Chaintré"
+city = "Chaintré"
+department = "71"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Melun Sud Dammarie-les-Lys"
+city = "Dammarie-les-Lys"
+department = "77"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Mulhouse Sud Morschwiller-le-Bas"
+city = "Morschwiller-le-Bas"
+department = "68"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Nîmes Sud Caissargues"
+city = "Caissargues"
+department = "30"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Pontarlier"
+city = "Pontarlier"
+department = "25"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Rouen Nord Barentin"
+city = "Barentin"
+department = "76"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Rouen Sud Cléon Elbeuf"
+city = "Cléon"
+department = "76"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Strasbourg Lingolsheim"
+city = "Strasbourg"
+department = "67"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Auxerre Monéteau"
+city = "Monéteau"
+department = "89"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Vichy Bellerive-sur-Allier"
+city = "Bellerive-sur-Allier"
+department = "03"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Campanile Vire"
+city = "Vire"
+department = "14"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Première Classe Avallon"
+city = "Sauvigny-le-Bois"
+department = "89"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Première Classe Auxerre Monéteau"
+city = "Monéteau"
+department = "89"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Première Classe Brive-la-Gaillarde"
+city = "Brive-la-Gaillarde"
+department = "19"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Première Classe Châteauroux Saint-Maur"
+city = "Saint-Maur"
+department = "36"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Première Classe Grenoble Nord Moirans"
+city = "Moirans"
+department = "38"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Première Classe Pamiers"
+city = "Pamiers"
+department = "09"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Première Classe Saint-Brieuc Trégueux"
+city = "Trégueux"
+department = "22"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Ibis Budget Paris Aubervilliers"
+city = "Aubervilliers"
+department = "93"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "SH Saint-Fons"
+city = "Saint-Fons"
+department = "69"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Hôtel L'Agapa"
+city = "Perros-Guirec"
+department = "22"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Ibis Budget Villefranche-sur-Saône"
+city = "Limas"
+department = "69"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Grasse / Châteauneuf-de-Grasse"
+city = "Châteauneuf-Grasse"
+department = "06"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Hôtel Saint-Régis"
+city = "Chalon-sur-Saône"
+department = "71"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Vitrolles"
+city = "Vitrolles"
+department = "13"
+capacity = 0
+services = ["hébergement"]
+[[hotels]]
+name = "Hôtel Kyriad Bourges Sud"
+city = "Bourges"
+department = "18"
+capacity = 0
+services = ["hébergement"]
 
 # BOAMP uses the official DILA open-data API and is ready to run.
 [[sources]]

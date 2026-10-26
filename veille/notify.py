@@ -36,6 +36,10 @@ def send(item: ScoredTender, recipients: list[str]) -> tuple[str, str | None]:
         with smtplib.SMTP(host, port, timeout=30) as client:
             if os.getenv("SMTP_STARTTLS", "true").lower() != "false": client.starttls()
             username, password = os.getenv("SMTP_USERNAME"), os.getenv("SMTP_PASSWORD")
+            # Google displays app passwords in blocks of four; accepting that display
+            # format prevents a pasted space from invalidating SMTP authentication.
+            if host.lower() == "smtp.gmail.com" and password:
+                password = "".join(password.split())
             if username: client.login(username, password or "")
             client.send_message(msg)
         return "sent", None
