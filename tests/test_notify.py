@@ -69,3 +69,51 @@ class RecipientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfigurationGuardTests(unittest.TestCase):
+    """Une erreur de configuration doit se lire, pas se deviner."""
+
+    def setUp(self):
+        import os
+        self.saved = {k: os.environ.get(k) for k in ("SMTP_HOST", "SMTP_USERNAME", "SMTP_FROM", "SMTP_FROM_NAME")}
+
+    def tearDown(self):
+        import os
+        for key, value in self.saved.items():
+            os.environ.pop(key, None)
+            if value is not None: os.environ[key] = value
+
+    def test_a_display_name_in_the_username_is_reported_clearly(self):
+        import os
+        from veille.notify import check_configuration
+        os.environ["SMTP_USERNAME"] = "BAHO Veille"
+        message = check_configuration()
+        self.assertIsNotNone(message)
+        self.assertIn("SMTP_USERNAME", message)
+        self.assertIn("SMTP_FROM_NAME", message)
+
+    def test_a_valid_account_passes(self):
+        import os
+        from veille.notify import check_configuration
+        os.environ["SMTP_USERNAME"] = "veille@baho.fr"
+        os.environ["SMTP_FROM"] = "veille@baho.fr"
+        self.assertIsNone(check_configuration())
+
+    def test_send_fails_fast_instead_of_timing_out(self):
+        import os
+        from veille.cli import sample_alert
+        from veille.notify import send
+        os.environ["SMTP_HOST"] = "smtp.example.invalid"
+        os.environ["SMTP_USERNAME"] = "BAHO Veille"
+        status, error = send(sample_alert(), ["a@b.c"])
+        self.assertEqual("failed", status)
+        self.assertIn("SMTP_USERNAME", error)
+
+    def test_the_sender_display_name_is_configurable(self):
+        import os
+        from veille.cli import sample_alert
+        from veille.notify import build_message
+        os.environ["SMTP_FROM_NAME"] = "BAHO Veille"
+        os.environ["SMTP_FROM"] = "veille@baho.fr"
+        self.assertIn("BAHO Veille", build_message(sample_alert(), ["a@b.c"])["From"])

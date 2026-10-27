@@ -23,11 +23,30 @@ PALETTE = {
 }
 
 
+def check_configuration() -> str | None:
+    """Retourne un message si la configuration SMTP est inutilisable, sinon None.
+
+    Un identifiant qui n'est pas une adresse est l'erreur la plus fréquente : le serveur
+    coupe alors la connexion sans rien expliquer (« Connection unexpectedly closed »).
+    Autant le dire franchement avant de tenter l'envoi.
+    """
+    username = os.getenv("SMTP_USERNAME", "")
+    if username and "@" not in username:
+        return (f"SMTP_USERNAME doit être l'adresse du compte, pas un nom d'affichage "
+                f"(valeur actuelle : {username!r}). Le nom affiché se règle avec SMTP_FROM_NAME.")
+    sender = os.getenv("SMTP_FROM", "")
+    if sender and "@" not in sender:
+        return f"SMTP_FROM doit être une adresse e-mail (valeur actuelle : {sender!r})."
+    return None
+
+
 def send(item: ScoredTender, recipients: list[str], event: str = "created", threshold: int = 35) -> tuple[str, str | None]:
     """Envoie l'alerte. Les identifiants SMTP restent exclusivement dans l'environnement."""
     if not recipients: return "skipped_no_recipients", None
     host = os.getenv("SMTP_HOST")
     if not host: return "skipped_no_smtp", None
+    problem = check_configuration()
+    if problem: return "failed", problem
     message = build_message(item, recipients, event=event, threshold=threshold)
     try:
         port = int(os.getenv("SMTP_PORT", "587"))
@@ -51,7 +70,8 @@ def build_message(item: ScoredTender, recipients: list[str], event: str = "creat
     urgency = _urgency(tender.deadline_at)
     message = EmailMessage()
     message["Subject"] = _subject(item, urgency, event)
-    message["From"] = formataddr(("BAHO · veille appels d'offres", os.getenv("SMTP_FROM", "veille@localhost")))
+    message["From"] = formataddr((os.getenv("SMTP_FROM_NAME", "BAHO · veille appels d'offres"),
+                                  os.getenv("SMTP_FROM", "veille@localhost")))
     message["To"] = ", ".join(recipients)
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid(domain="baho-veille")
