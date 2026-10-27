@@ -22,6 +22,14 @@ class Tender:
     rooms_or_nights: str = "Non renseigné"
     documents: list[str] = field(default_factory=list)
     source_url: str = ""
+    # Champs du brief restitués dans l'alerte : nature du marché, procédure, profil
+    # d'acheteur et durée. Chacun reste facultatif ; une absence n'exclut rien.
+    procedure: str = ""
+    notice_kind: str = ""
+    contract_nature: str = ""
+    duration: str = ""
+    lots: list[str] = field(default_factory=list)
+    buyer_profile: str = ""
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def public(self) -> dict[str, Any]:
@@ -33,12 +41,25 @@ class Tender:
 
 
 @dataclass(slots=True)
+class ScoreLine:
+    """Une ligne du détail de score, affichée telle quelle dans l'e-mail et le tableau de bord."""
+    label: str
+    points: int
+    maximum: int
+    detail: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"label": self.label, "points": self.points, "maximum": self.maximum, "detail": self.detail}
+
+
+@dataclass(slots=True)
 class ScoredTender:
     tender: Tender
     score: int
     reasons: list[str]
     keyword_hits: list[str]
     commercial_match: bool
+    breakdown: list[ScoreLine] = field(default_factory=list)
 
 
 @dataclass(slots=True)

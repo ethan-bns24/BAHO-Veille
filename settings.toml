@@ -6,9 +6,14 @@ lookback_days = 5
 log_level = "INFO"
 
 [notification]
-# Alerts are sent only when a tender reaches this score. All tenders remain stored.
+# Une alerte n'est envoyée qu'au-dessus de ce score. Toutes les annonces restent stockées.
 minimum_score = 35
 recipients = []
+# Délai entre deux alertes d'un même cycle. Une rafale d'e-mails identiques vers la même
+# boîte est le premier motif de classement en indésirable : on les étale.
+send_interval_seconds = 120
+# Plafond d'envois par cycle. Le reste n'est pas perdu : il part au cycle suivant.
+max_alerts_per_cycle = 12
 
 [scoring]
 keyword_weight = 30
@@ -204,30 +209,106 @@ department = "18"
 capacity = 0
 services = ["hébergement"]
 
-# BOAMP uses the official DILA open-data API and is ready to run.
+# ---------------------------------------------------------------------------
+# Sources surveillées
+#
+# `boamp` et `ted` sont des API publiques officielles : elles fonctionnent sans compte
+# ni clé et sont actives par défaut. Les autres plateformes du brief sont pré-câblées
+# mais désactivées : leur flux n'est pas ouvert à tous, il faut renseigner l'URL
+# autorisée (souvent un flux d'alerte lié à un compte entreprise) et valider les
+# conditions d'utilisation avant de basculer `enabled = true`. Rien n'est scrapé.
+#
+# Tout se pilote aussi depuis le tableau de bord, onglet « Sources ».
+# ---------------------------------------------------------------------------
+
+# BOAMP — API open data officielle de la DILA. Interrogation côté serveur sur l'objet,
+# le descripteur et les codes CPV : la collecte ne se limite pas aux derniers avis.
 [[sources]]
 name = "boamp"
 kind = "boamp"
 enabled = true
-# Safety cap per poll. Results are paginated and filtered server-side by the BAHO query.
-limit = 500
+limit = 600
+natures = ["APPEL_OFFRE", "RECTIFICATIF", "MODIFICATION", "PRE-INFORMATION", "INTENTION_CONCLURE"]
+terms = [
+  "hôtel", "hôtellerie", "hôtelier", "hébergement", "nuitée", "nuitées", "chambres",
+  "séminaire", "congrès", "colloque", "convention", "restauration", "réservation",
+  "séjour", "mise à l'abri", "demi-pension", "pension complète", "traiteur",
+]
+cpvs = ["55100000", "55110000", "55120000", "55130000", "55270000"]
 
-# The following adapters are deliberately disabled until their official flux/API URL
-# and terms of use have been validated. They accept RSS/Atom or JSON feeds.
+# TED — édition européenne des marchés publics (API Expert Search v3, publique).
+# Apporte la valeur estimée, les codes CPV normalisés et le NUTS du lieu d'exécution,
+# que le BOAMP ne structure pas. Couvre les avis français au-dessus des seuils européens.
+[[sources]]
+name = "ted"
+kind = "ted"
+enabled = true
+limit = 300
+countries = ["FRA"]
+cpvs = [
+  "55100000", "55110000", "55120000", "55130000", "55270000",
+  "55200000", "55240000", "55250000", "98341000",
+]
+title_terms = [
+  "hébergement", "hôtelier", "hôtelière", "hôtellerie", "nuitées", "chambres",
+  "séminaire", "colloque", "congrès", "mise à l'abri",
+]
+description_terms = [
+  "hébergement hôtelier", "allotement de chambres", "séminaire résidentiel", "nuitées",
+]
+
+# PLACE — profil d'acheteur de l'État (marches-publics.gouv.fr). Le flux RSS des
+# consultations est réservé aux comptes entreprise : créer le compte BAHO, enregistrer
+# une alerte sur les mots-clés hôteliers, puis coller ici l'URL RSS fournie.
+# Les identifiants se passent par variables d'environnement, jamais en clair ici.
 [[sources]]
 name = "place"
 kind = "feed"
 enabled = false
 url = ""
+username_env = "PLACE_USERNAME"
+password_env = "PLACE_PASSWORD"
 
+# France Marchés — flux RSS par département ou par recherche enregistrée.
 [[sources]]
 name = "france_marches"
 kind = "feed"
 enabled = false
 url = ""
 
+# AWS-Achat / marches-publics.info — flux d'alerte lié au compte fournisseur.
 [[sources]]
 name = "aws_achat"
 kind = "feed"
 enabled = false
 url = ""
+
+# e-marchés publics (Dematis), Klekoon, Marchés Online, Centrale des marchés,
+# Achatpublic : mêmes modalités, un flux autorisé par compte. Dupliquer un bloc
+# `[[sources]]` de type `feed` pour chacun au moment de l'activation.
+[[sources]]
+name = "e_marchespublics"
+kind = "feed"
+enabled = false
+url = ""
+
+[[sources]]
+name = "klekoon"
+kind = "feed"
+enabled = false
+url = ""
+
+[[sources]]
+name = "marches_online"
+kind = "feed"
+enabled = false
+url = ""
+
+# Profils d'acheteurs publiant un export XML ouvert (plateforme xmarches et
+# équivalents). Un bloc par acheteur suivi ; `field_map` n'est utile que si le flux
+# nomme ses champs autrement que les alias reconnus par le connecteur.
+[[sources]]
+name = "profil_acheteur_exemple"
+kind = "feed"
+enabled = false
+url = "https://www.xmarches.fr/entreprise/listeConsultations_xml.php?UIDSPL=GC54006"

@@ -37,6 +37,14 @@ CREATE INDEX IF NOT EXISTS idx_tenders_score ON tenders(score DESC, updated_at D
 CREATE INDEX IF NOT EXISTS idx_tenders_deadline ON tenders(deadline_at);
 """
 
+# Colonnes ajoutées après la première mise en service. Elles sont créées à la volée pour
+# qu'une base existante continue de fonctionner sans export/import.
+ADDED_COLUMNS = {
+    "procedure": "TEXT", "notice_kind": "TEXT", "contract_nature": "TEXT", "duration": "TEXT",
+    "buyer_profile": "TEXT", "lots_json": "TEXT", "breakdown_json": "TEXT", "dedup_key": "TEXT",
+}
+ADDED_INDEXES = ("CREATE INDEX IF NOT EXISTS idx_tenders_dedup ON tenders(dedup_key)",)
+
 
 class Database:
     def __init__(self, path: Path):
@@ -49,7 +57,15 @@ class Database:
         return conn
 
     def initialize(self) -> None:
-        with closing(self.connect()) as conn: conn.executescript(SCHEMA)
+        with closing(self.connect()) as conn:
+            conn.executescript(SCHEMA)
+            present = {row["name"] for row in conn.execute("PRAGMA table_info(tenders)")}
+            for column, kind in ADDED_COLUMNS.items():
+                if column not in present:
+                    conn.execute(f"ALTER TABLE tenders ADD COLUMN {column} {kind}")
+            for statement in ADDED_INDEXES:
+                conn.execute(statement)
+            conn.commit()
 
     def event(self, level: str, kind: str, message: str, source: str | None = None, tender_id: int | None = None) -> None:
         with closing(self.connect()) as conn:
@@ -59,29 +75,50 @@ class Database:
     def upsert(self, item: ScoredTender) -> UpsertResult:
         tender = item.tender
         canonical = _canonical(tender.reference, tender.buyer, tender.title, tender.deadline_at)
+        dedup = dedup_key(tender)
         version = version_hash(item)
         now = _now()
-        values = (tender.reference, tender.title, tender.buyer, tender.description, json.dumps(tender.cpvs), iso(tender.published_at),
-                  iso(tender.deadline_at), tender.location, tender.department, tender.estimate_eur, tender.rooms_or_nights,
-                  json.dumps(tender.documents), item.score, json.dumps(item.reasons, ensure_ascii=False), version, now)
+        columns = ("reference", "title", "buyer", "description", "cpvs_json", "published_at", "deadline_at",
+                   "location", "department", "estimate_eur", "rooms_or_nights", "documents_json", "score",
+                   "reasons_json", "procedure", "notice_kind", "contract_nature", "duration", "buyer_profile",
+                   "lots_json", "breakdown_json", "dedup_key", "version_hash", "updated_at")
+        values = (tender.reference, tender.title, tender.buyer, tender.description, json.dumps(tender.cpvs),
+                  iso(tender.published_at), iso(tender.deadline_at), tender.location, tender.department,
+                  tender.estimate_eur, tender.rooms_or_nights, json.dumps(tender.documents), item.score,
+                  json.dumps(item.reasons, ensure_ascii=False), tender.procedure, tender.notice_kind,
+                  tender.contract_nature, tender.duration, tender.buyer_profile,
+                  json.dumps(tender.lots, ensure_ascii=False),
+                  json.dumps([line.as_dict() for line in item.breakdown], ensure_ascii=False), dedup, version, now)
         with closing(self.connect()) as conn:
             existing = conn.execute("SELECT id, version_hash FROM tenders WHERE canonical_key=?", (canonical,)).fetchone()
+            if existing is None and dedup:
+                # Le même marché publié sur deux plateformes porte deux références.
+                # On le regroupe sur l'intitulé et l'échéance, en conservant les deux liens.
+                existing = conn.execute(
+                    "SELECT id, version_hash FROM tenders WHERE dedup_key=? ORDER BY id LIMIT 1", (dedup,)).fetchone()
+                if existing is not None:
+                    conn.execute("INSERT INTO events(tender_id,source,level,kind,message,created_at) VALUES(?,?,?,?,?,?)",
+                        (existing["id"], tender.source, "INFO", "merged",
+                         f"Doublon inter-plateformes rattaché: {tender.source} {tender.external_id}", now))
             if existing is None:
-                cursor = conn.execute("""INSERT INTO tenders(canonical_key,reference,title,buyer,description,cpvs_json,published_at,deadline_at,
-                    location,department,estimate_eur,rooms_or_nights,documents_json,score,reasons_json,version_hash,created_at,updated_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (canonical, *values, now))
+                placeholders = ",".join("?" for _ in range(len(columns) + 2))
+                cursor = conn.execute(
+                    f"INSERT INTO tenders(canonical_key,{','.join(columns)},created_at) VALUES({placeholders})",
+                    (canonical, *values, now))
                 tender_id, event = cursor.lastrowid, "created"
             elif existing["version_hash"] != version:
                 tender_id, event = existing["id"], "updated"
-                conn.execute("""UPDATE tenders SET reference=?,title=?,buyer=?,description=?,cpvs_json=?,published_at=?,deadline_at=?,location=?,
-                    department=?,estimate_eur=?,rooms_or_nights=?,documents_json=?,score=?,reasons_json=?,version_hash=?,updated_at=? WHERE id=?""",
-                    (*values, tender_id))
+                assignments = ",".join(f"{column}=?" for column in columns)
+                conn.execute(f"UPDATE tenders SET {assignments} WHERE id=?", (*values, tender_id))
             else:
                 tender_id, event = existing["id"], "unchanged"
-                # Rules and hotel locations can change without the source notice changing.
-                # Refresh the classification, but do not re-alert the commercial team.
-                conn.execute("UPDATE tenders SET score=?, reasons_json=? WHERE id=?", (item.score, json.dumps(item.reasons, ensure_ascii=False), tender_id))
-            source_insert = conn.execute("INSERT OR IGNORE INTO tender_sources(tender_id,source,external_id,source_url,first_seen_at,last_seen_at) VALUES(?,?,?,?,?,?)",
+                # Les règles et les implantations peuvent changer sans que l'avis bouge.
+                # On rafraîchit le classement sans re-notifier l'équipe commerciale.
+                conn.execute("UPDATE tenders SET score=?, reasons_json=?, breakdown_json=? WHERE id=?",
+                             (item.score, json.dumps(item.reasons, ensure_ascii=False),
+                              json.dumps([line.as_dict() for line in item.breakdown], ensure_ascii=False), tender_id))
+            source_insert = conn.execute(
+                "INSERT OR IGNORE INTO tender_sources(tender_id,source,external_id,source_url,first_seen_at,last_seen_at) VALUES(?,?,?,?,?,?)",
                 (tender_id, tender.source, tender.external_id, tender.source_url, now, now))
             source_added = source_insert.rowcount > 0
             conn.execute("UPDATE tender_sources SET last_seen_at=?, source_url=? WHERE source=? AND external_id=?",
@@ -103,21 +140,70 @@ class Database:
                 error=excluded.error, sent_at=excluded.sent_at""",
                 (tender_id, version_hash, status, ", ".join(recipients), error, _now())); conn.commit()
 
-    def dashboard(self, limit: int = 100, minimum_score: int = 35) -> dict:
+    def clear_notifications(self) -> int:
+        """Oublie les alertes déjà envoyées.
+
+        Les annonces et leur classement sont conservés : seul l'historique d'envoi
+        disparaît, de sorte que les opportunités au-dessus du seuil soient notifiées à
+        nouveau — typiquement après un changement de destinataire.
+        """
         with closing(self.connect()) as conn:
-            rows = conn.execute("""SELECT t.*, GROUP_CONCAT(DISTINCT s.source) AS source_names, GROUP_CONCAT(DISTINCT s.source_url) AS source_urls
-                FROM tenders t LEFT JOIN tender_sources s ON s.tender_id=t.id GROUP BY t.id ORDER BY t.score DESC,t.updated_at DESC LIMIT ?""", (limit,)).fetchall()
+            removed = conn.execute("DELETE FROM notifications").rowcount
+            conn.execute("INSERT INTO events(tender_id,source,level,kind,message,created_at) VALUES(?,?,?,?,?,?)",
+                         (None, "veille", "INFO", "notifications_reset",
+                          f"Historique d'envoi purgé ({removed} entrée(s))", _now()))
+            conn.commit()
+        return removed
+
+    def dashboard(self, limit: int = 200, minimum_score: int = 35) -> dict:
+        with closing(self.connect()) as conn:
+            rows = conn.execute("""SELECT t.*, GROUP_CONCAT(DISTINCT s.source) AS source_names,
+                GROUP_CONCAT(DISTINCT s.source_url) AS source_urls,
+                (SELECT status FROM notifications n WHERE n.tender_id=t.id ORDER BY n.sent_at DESC LIMIT 1) AS alert_status
+                FROM tenders t LEFT JOIN tender_sources s ON s.tender_id=t.id
+                GROUP BY t.id ORDER BY t.score DESC,t.updated_at DESC LIMIT ?""", (limit,)).fetchall()
             health = conn.execute("""SELECT source, level, kind, message, created_at FROM events
                 WHERE id IN (SELECT MAX(id) FROM events WHERE source IS NOT NULL GROUP BY source) ORDER BY source""").fetchall()
-            stats = conn.execute("SELECT COUNT(*) AS total, SUM(CASE WHEN score >= ? THEN 1 ELSE 0 END) AS relevant FROM tenders", (minimum_score,)).fetchone()
-        payload = dict(stats); payload["threshold"] = minimum_score
+            stats = conn.execute("""SELECT COUNT(*) AS total,
+                SUM(CASE WHEN score >= ? THEN 1 ELSE 0 END) AS relevant,
+                SUM(CASE WHEN deadline_at > ? THEN 1 ELSE 0 END) AS open_tenders,
+                MAX(updated_at) AS last_update FROM tenders""", (minimum_score, _now())).fetchone()
+            alerts = conn.execute("SELECT COUNT(*) AS sent FROM notifications WHERE status='sent'").fetchone()
+        payload = dict(stats)
+        payload["threshold"] = minimum_score
+        payload["alerts"] = alerts["sent"] or 0
         return {"tenders": [_row(row) for row in rows], "health": [_row(row) for row in health], "stats": payload}
+
+    def recent_events(self, limit: int = 40) -> list[dict]:
+        with closing(self.connect()) as conn:
+            rows = conn.execute("SELECT level,kind,source,message,created_at FROM events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def tender(self, tender_id: int) -> dict | None:
+        with closing(self.connect()) as conn:
+            row = conn.execute("""SELECT t.*, GROUP_CONCAT(DISTINCT s.source) AS source_names,
+                GROUP_CONCAT(DISTINCT s.source_url) AS source_urls FROM tenders t
+                LEFT JOIN tender_sources s ON s.tender_id=t.id WHERE t.id=? GROUP BY t.id""", (tender_id,)).fetchone()
+        return _row(row) if row else None
 
 
 def _canonical(reference: str, buyer: str, title: str, deadline: datetime | None) -> str:
     # A contract folder/reference is authoritative. The fallback is intentionally conservative.
     if reference: return f"ref:{normalized(reference)}"
     return "fallback:" + fingerprint([normalized(buyer), normalized(title), iso(deadline) or ""])
+
+
+def dedup_key(tender) -> str:
+    """Identifie un même marché publié sur plusieurs plateformes.
+
+    L'intitulé normalisé et la date d'échéance suffisent et restent prudents : deux
+    consultations distinctes partagent rarement les deux. Sans échéance publiée, on
+    n'engage pas de rapprochement.
+    """
+    title = normalized(tender.title)
+    deadline = iso(tender.deadline_at)
+    if len(title) < 15 or not deadline: return ""
+    return fingerprint(["dedup", title, deadline[:10]])
 
 
 def version_hash(item: ScoredTender) -> str:
@@ -129,6 +215,6 @@ def version_hash(item: ScoredTender) -> str:
 def _now() -> str: return datetime.now(timezone.utc).isoformat()
 def _row(row: sqlite3.Row) -> dict:
     out = dict(row)
-    for key in ("cpvs_json", "documents_json", "reasons_json"):
+    for key in ("cpvs_json", "documents_json", "reasons_json", "lots_json", "breakdown_json"):
         if key in out: out[key[:-5]] = json.loads(out.pop(key) or "[]")
     return out

@@ -1,46 +1,169 @@
+"""Tableau de bord local.
+
+Il sert trois usages : suivre les opportunités collectées, surveiller l'état de chaque
+source, et surtout régler la veille en direct. Les modifications sont écrites dans
+`overrides.json` et relues au cycle suivant : aucun redémarrage, aucun fichier versionné
+réécrit.
+"""
+
 from __future__ import annotations
 
-import html
 import json
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from .config import LIST_KEYS, NUMERIC_KEYS, load_settings
+from .dashboard import PAGE
 from .database import Database
+from .service import WatchService
+
+MAX_BODY = 1 << 20
 
 
-def serve(db: Database, host: str, port: int, minimum_score: int = 35) -> None:
+def serve(settings, host: str, port: int) -> None:
+    state = {"settings": settings, "running": False, "last_run": None}
+    db = Database(settings.database_path)
+    db.initialize()
+    lock = threading.Lock()
+
+    def current():
+        return state["settings"]
+
+    def run_cycle() -> None:
+        with lock:
+            if state["running"]: return
+            state["running"] = True
+        try:
+            state["last_run"] = WatchService(load_settings(current().path)).run_once()
+        except Exception as exc:  # une erreur de cycle ne doit pas tuer le serveur
+            state["last_run"] = {"error": str(exc)}
+            db.event("ERROR", "cycle_error", str(exc), "dashboard")
+        finally:
+            state["running"] = False
+
     class Handler(BaseHTTPRequestHandler):
+        server_version = "BAHO-veille"
+
         def do_GET(self) -> None:
             path = urlparse(self.path).path
-            data = db.dashboard(minimum_score=minimum_score)
-            if path == "/api/tenders": return self._json(data)
-            if path != "/": return self.send_error(404)
-            page = _page(data)
-            encoded = page.encode()
-            self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(encoded))); self.end_headers(); self.wfile.write(encoded)
-        def _json(self, value: dict) -> None:
-            encoded = json.dumps(value, ensure_ascii=False, default=str).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Content-Length", str(len(encoded))); self.end_headers(); self.wfile.write(encoded)
+            if path == "/":
+                return self._html(PAGE)
+            if path == "/api/state":
+                return self._json(self._state())
+            if path == "/api/events":
+                return self._json({"events": db.recent_events()})
+            return self.send_error(404)
+
+        def do_POST(self) -> None:
+            path = urlparse(self.path).path
+            try:
+                payload = self._body()
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, status=400)
+            if path == "/api/settings":
+                try:
+                    patch = _validate(payload)
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, status=400)
+                state["settings"] = current().apply(patch)
+                return self._json(self._state() | {"saved": sorted(patch)})
+            if path == "/api/settings/reset":
+                state["settings"] = current().reset()
+                return self._json(self._state() | {"saved": ["réglages d'origine restaurés"]})
+            if path == "/api/alerts/reset":
+                removed = db.clear_notifications()
+                return self._json({"removed": removed})
+            if path == "/api/run":
+                if state["running"]:
+                    return self._json({"error": "Un cycle est déjà en cours."}, status=409)
+                threading.Thread(target=run_cycle, daemon=True).start()
+                return self._json({"started": True})
+            if path == "/api/test-email":
+                from .cli import sample_alert
+                from .notify import send
+                settings_now = current()
+                status, error = send(sample_alert(), settings_now.recipients,
+                                     threshold=int(settings_now.notification["minimum_score"]))
+                return self._json({"status": status, "error": error, "recipients": settings_now.recipients})
+            return self.send_error(404)
+
+        # ---------------------------------------------------------------- helpers
+
+        def _state(self) -> dict:
+            settings = current()
+            threshold = int(settings.notification["minimum_score"])
+            data = db.dashboard(minimum_score=threshold)
+            return {
+                **data,
+                "settings": settings.editable(),
+                "schema": {
+                    "numeric": {key: {"label": label, "min": low, "max": high}
+                                for key, (label, low, high) in NUMERIC_KEYS.items()},
+                    "lists": LIST_KEYS,
+                },
+                "sources": [{"name": s.get("name"), "kind": s.get("kind"), "enabled": bool(s.get("enabled")),
+                             "url": s.get("url", ""), "limit": s.get("limit", 0)} for s in settings.sources],
+                "hotels": settings.hotels,
+                "running": state["running"],
+                "last_run": state["last_run"],
+                "overrides": bool(settings.overrides),
+            }
+
+        def _body(self) -> dict:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0: return {}
+            if length > MAX_BODY: raise ValueError("Requête trop volumineuse")
+            try:
+                value = json.loads(self.rfile.read(length))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"JSON invalide: {exc}") from exc
+            if not isinstance(value, dict): raise ValueError("Corps de requête inattendu")
+            return value
+
+        def _json(self, value: dict, status: int = 200) -> None:
+            self._send(json.dumps(value, ensure_ascii=False, default=str).encode(), "application/json", status)
+
+        def _html(self, page: str) -> None:
+            self._send(page.encode(), "text/html", 200)
+
+        def _send(self, body: bytes, kind: str, status: int) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", f"{kind}; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
         def log_message(self, format: str, *args: object) -> None: pass
+
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
-def _page(data: dict) -> str:
-    statistics = data["stats"]
-    rows = "".join(_tender_row(t) for t in data["tenders"]) or '<tr><td colspan="7">Aucune annonce collectée pour le moment.</td></tr>'
-    health = "".join(f'<li><b>{html.escape(str(x["source"]))}</b> — {html.escape(str(x["kind"]))}: {html.escape(str(x["message"]))}</li>' for x in data["health"]) or "<li>En attente du premier cycle</li>"
-    return f'''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BAHO — Veille appels d’offres</title><style>
-body{{max-width:1400px;margin:32px auto;padding:0 20px;background:#f6f7f5;color:#17211d;font:15px system-ui,sans-serif}}h1{{margin-bottom:4px}}.sub{{color:#536158}}.cards{{display:flex;gap:16px;margin:24px 0}}.card{{background:#fff;border-radius:12px;padding:18px;min-width:150px;box-shadow:0 1px 4px #0001}}.n{{font-size:30px;font-weight:700}}table{{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 1px 4px #0001}}th,td{{padding:12px;text-align:left;border-bottom:1px solid #e7e9e7;vertical-align:top}}th{{background:#173f32;color:#fff}}.score{{font-weight:700;color:#086b43}}small{{color:#536158}}a{{color:#006c48}}ul{{padding-left:20px}}</style>
-<h1>BAHO · veille commerciale</h1><p class="sub">Historique centralisé — toutes les opportunités sont conservées, même sous le seuil d’alerte.</p>
-<section class="cards"><div class="card"><div class="n">{statistics["total"] or 0}</div>annonces détectées</div><div class="card"><div class="n">{statistics["relevant"] or 0}</div>score ≥ {statistics["threshold"]}</div></section>
-<h2>État des sources</h2><ul>{health}</ul><h2>Opportunités</h2><table><thead><tr><th>Score</th><th>Appel d’offres</th><th>Acheteur</th><th>Échéance</th><th>Lieu</th><th>Sources</th><th>Motifs</th></tr></thead><tbody>{rows}</tbody></table>
-</html>'''
-
-
-def _tender_row(t: dict) -> str:
-    title = html.escape(t["title"])
-    url = next((x for x in (t.get("source_urls") or "").split(",") if x), "")
-    label = f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noreferrer">{title}</a>' if url.startswith(("https://", "http://")) else title
-    reasons = "<br>".join(html.escape(str(r)) for r in t.get("reasons", []))
-    return f'<tr><td class="score">{t["score"]}/100</td><td>{label}<br><small>{html.escape(t.get("reference") or "Référence non renseignée")}</small></td><td>{html.escape(t["buyer"])}</td><td>{html.escape(t.get("deadline_at") or "Non renseignée")}</td><td>{html.escape(t.get("location") or "Non renseigné")}</td><td>{html.escape(t.get("source_names") or "")}</td><td><small>{reasons}</small></td></tr>'
+def _validate(payload: dict) -> dict:
+    """N'accepte que les clés exposées, dans leurs bornes. Le reste est rejeté."""
+    patch: dict = {}
+    for key, value in payload.items():
+        if key in NUMERIC_KEYS:
+            _, low, high = NUMERIC_KEYS[key]
+            try: number = float(value)
+            except (TypeError, ValueError) as exc: raise ValueError(f"{key}: valeur numérique attendue") from exc
+            if not low <= number <= high: raise ValueError(f"{key}: attendu entre {low:g} et {high:g}")
+            patch[key] = int(number) if float(number).is_integer() else number
+        elif key in LIST_KEYS:
+            items = value if isinstance(value, list) else str(value).splitlines()
+            patch[key] = [str(item).strip() for item in items if str(item).strip()]
+        elif key == "sources":
+            if not isinstance(value, dict): raise ValueError("sources: objet attendu")
+            cleaned = {}
+            for name, item in value.items():
+                if not isinstance(item, dict): raise ValueError(f"sources.{name}: objet attendu")
+                allowed = {k: v for k, v in item.items() if k in ("enabled", "url", "limit", "kind")}
+                if "enabled" in allowed: allowed["enabled"] = bool(allowed["enabled"])
+                if "limit" in allowed: allowed["limit"] = max(1, min(5000, int(allowed["limit"] or 1)))
+                cleaned[str(name)] = allowed
+            patch["sources"] = cleaned
+        else:
+            raise ValueError(f"Réglage inconnu: {key}")
+    if not patch: raise ValueError("Aucun réglage à enregistrer")
+    return patch
