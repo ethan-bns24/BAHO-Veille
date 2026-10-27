@@ -63,7 +63,7 @@ class WatchService:
                 # déjà stockée mais jamais notifiée doit tout de même alerter une fois.
                 if not item.commercial_match or item.score < int(settings.notification["minimum_score"]): continue
                 digest = version_hash(item)
-                if self.db.notification_exists(result.tender_id, digest): continue
+                if not self.db.should_notify(result.tender_id, tender.deadline_at, item.score): continue
                 if pacing.exhausted:
                     # Le plafond du cycle est atteint : l'annonce n'est pas notifiée
                     # maintenant, elle le sera au cycle suivant. Rien n'est perdu.
@@ -71,7 +71,8 @@ class WatchService:
                     continue
                 pacing.wait()
                 status, error = send(item, settings.recipients, event=result.event, threshold=int(settings.notification["minimum_score"]))
-                self.db.record_notification(result.tender_id, digest, status, settings.recipients, error)
+                self.db.record_notification(result.tender_id, digest, status, settings.recipients, error,
+                                            deadline=tender.deadline_at, score=item.score)
                 pacing.record(status)
                 if status == "sent": summary["alerts_sent"] += 1
                 elif status == "failed":

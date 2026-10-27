@@ -170,11 +170,79 @@ class NotificationResetTests(unittest.TestCase):
             item = sample_alert()
             result = db.upsert(item)
             digest = version_hash(item)
-            db.record_notification(result.tender_id, digest, "sent", ["a@b.c"])
-            self.assertTrue(db.notification_exists(result.tender_id, digest))
+            deadline = item.tender.deadline_at
+            db.record_notification(result.tender_id, digest, "sent", ["a@b.c"],
+                                   deadline=deadline, score=item.score)
+            self.assertFalse(db.should_notify(result.tender_id, deadline, item.score))
 
             self.assertEqual(1, db.clear_notifications())
 
-            self.assertFalse(db.notification_exists(result.tender_id, digest),
-                             "l'opportunité doit pouvoir être notifiée à nouveau")
+            self.assertTrue(db.should_notify(result.tender_id, deadline, item.score),
+                            "l'opportunité doit pouvoir être notifiée à nouveau")
             self.assertEqual(1, db.dashboard()["stats"]["total"], "l'annonce doit être conservée")
+
+
+class RenotificationTests(unittest.TestCase):
+    """Le garde-fou anti-renvoi doit être neutre vis-à-vis de la plateforme d'origine."""
+
+    def setUp(self):
+        import tempfile
+        from veille.database import Database
+        self.folder = tempfile.TemporaryDirectory()
+        self.db = Database(Path(self.folder.name) / "v.sqlite3")
+        self.db.initialize()
+
+    def tearDown(self):
+        self.folder.cleanup()
+
+    def _store(self, source, title, description, reference, deadline, score=55):
+        from veille.database import version_hash
+        from veille.models import ScoredTender, Tender
+        tender = Tender(source=source, external_id=f"{source}-1", title=title, description=description,
+                        reference=reference, buyer="Mairie d'Argenteuil", deadline_at=deadline)
+        item = ScoredTender(tender=tender, score=score, reasons=[], keyword_hits=[], commercial_match=True)
+        return self.db.upsert(item), item, version_hash(item)
+
+    def test_the_same_market_from_two_platforms_alerts_once(self):
+        from datetime import datetime, timezone
+        deadline = datetime(2026, 11, 20, 11, 0, tzinfo=timezone.utc)
+        boamp, item, digest = self._store("boamp", "Organisation de séjours de vacances",
+                                          "Description BOAMP", "8e85e44c-ae66", deadline)
+        self.assertTrue(self.db.should_notify(boamp.tender_id, deadline, 55))
+        self.db.record_notification(boamp.tender_id, digest, "sent", ["a@b.c"], deadline=deadline, score=55)
+
+        # Même marché, même échéance, mais champs TED différents : aucune seconde alerte.
+        ted, _, ted_digest = self._store("ted", "Organisation de séjours de vacances",
+                                         "Description TED, bien plus longue", "734177-2026", deadline)
+        self.assertEqual(boamp.tender_id, ted.tender_id, "les deux sources doivent être fusionnées")
+        self.assertNotEqual(digest, ted_digest, "les empreintes diffèrent bien d'une source à l'autre")
+        self.assertFalse(self.db.should_notify(ted.tender_id, deadline, 55),
+                         "une seule opportunité ne doit déclencher qu'une seule alerte")
+
+    def test_a_changed_deadline_triggers_a_new_alert(self):
+        from datetime import datetime, timezone
+        first = datetime(2026, 11, 20, 11, 0, tzinfo=timezone.utc)
+        result, item, digest = self._store("boamp", "Hébergement hôtelier annuel", "Objet", "REF-1", first)
+        self.db.record_notification(result.tender_id, digest, "sent", ["a@b.c"], deadline=first, score=55)
+        moved = datetime(2026, 12, 5, 11, 0, tzinfo=timezone.utc)
+        self.assertTrue(self.db.should_notify(result.tender_id, moved, 55))
+
+    def test_a_marginal_score_change_does_not_realert(self):
+        from datetime import datetime, timezone
+        deadline = datetime(2026, 11, 20, 11, 0, tzinfo=timezone.utc)
+        result, item, digest = self._store("boamp", "Hébergement hôtelier annuel", "Objet", "REF-2", deadline)
+        self.db.record_notification(result.tender_id, digest, "sent", ["a@b.c"], deadline=deadline, score=55)
+        self.assertFalse(self.db.should_notify(result.tender_id, deadline, 60))
+        self.assertTrue(self.db.should_notify(result.tender_id, deadline, 75), "une requalification nette alerte")
+
+    def test_legacy_rows_without_a_recorded_deadline_are_not_replayed(self):
+        from datetime import datetime, timezone
+        import sqlite3
+        from contextlib import closing
+        deadline = datetime(2026, 11, 20, 11, 0, tzinfo=timezone.utc)
+        result, item, digest = self._store("boamp", "Hébergement hôtelier annuel", "Objet", "REF-3", deadline)
+        with closing(self.db.connect()) as conn:
+            conn.execute("""INSERT INTO notifications(tender_id,version_hash,status,recipients,sent_at)
+                            VALUES(?,?,'sent','a@b.c','2026-10-01T00:00:00+00:00')""", (result.tender_id, digest))
+            conn.commit()
+        self.assertFalse(self.db.should_notify(result.tender_id, deadline, 55))

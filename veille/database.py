@@ -43,6 +43,11 @@ ADDED_COLUMNS = {
     "procedure": "TEXT", "notice_kind": "TEXT", "contract_nature": "TEXT", "duration": "TEXT",
     "buyer_profile": "TEXT", "lots_json": "TEXT", "breakdown_json": "TEXT", "dedup_key": "TEXT",
 }
+ADDED_NOTIFICATION_COLUMNS = {"alert_deadline": "TEXT", "alert_score": "INTEGER"}
+
+# Écart de score à partir duquel une annonce déjà alertée mérite un rappel. En deçà,
+# la requalification est visible au tableau de bord sans encombrer la boîte.
+SIGNIFICANT_SCORE_GAIN = 15
 ADDED_INDEXES = ("CREATE INDEX IF NOT EXISTS idx_tenders_dedup ON tenders(dedup_key)",)
 
 
@@ -63,6 +68,10 @@ class Database:
             for column, kind in ADDED_COLUMNS.items():
                 if column not in present:
                     conn.execute(f"ALTER TABLE tenders ADD COLUMN {column} {kind}")
+            present = {row["name"] for row in conn.execute("PRAGMA table_info(notifications)")}
+            for column, kind in ADDED_NOTIFICATION_COLUMNS.items():
+                if column not in present:
+                    conn.execute(f"ALTER TABLE notifications ADD COLUMN {column} {kind}")
             for statement in ADDED_INDEXES:
                 conn.execute(statement)
             conn.commit()
@@ -129,16 +138,43 @@ class Database:
             conn.commit()
         return UpsertResult(tender_id, event, source_added)
 
-    def notification_exists(self, tender_id: int, version_hash: str) -> bool:
-        with closing(self.connect()) as conn:
-            return conn.execute("SELECT 1 FROM notifications WHERE tender_id=? AND version_hash=? AND status='sent'", (tender_id, version_hash)).fetchone() is not None
+    def should_notify(self, tender_id: int, deadline: datetime | None, score: int) -> bool:
+        """Décide si une annonce déjà vue mérite une nouvelle alerte.
 
-    def record_notification(self, tender_id: int, version_hash: str, status: str, recipients: list[str], error: str | None = None) -> None:
+        Le critère ne peut pas être l'empreinte de l'avis : un même marché publié sur deux
+        plateformes arrive avec deux descriptions, deux références et deux montants, donc
+        deux empreintes — et déclencherait deux alertes pour une seule opportunité.
+
+        On s'en tient à ce que le brief qualifie de motif de renvoi et qui ne dépend pas de
+        la source : un changement d'échéance, ou une requalification nettement à la hausse.
+        Le reste se consulte au tableau de bord.
+        """
         with closing(self.connect()) as conn:
-            conn.execute("""INSERT INTO notifications(tender_id,version_hash,status,recipients,error,sent_at) VALUES(?,?,?,?,?,?)
+            sent = conn.execute(
+                """SELECT alert_deadline, alert_score FROM notifications
+                   WHERE tender_id=? AND status='sent' ORDER BY sent_at DESC""", (tender_id,)).fetchall()
+        if not sent:
+            return True
+        # Les alertes antérieures à ces deux champs ne portent ni échéance ni score. On ne
+        # les rejoue sur aucun des deux motifs, sinon le correctif provoquerait lui-même
+        # la rafale de renvois qu'il est censé supprimer.
+        last_deadline = sent[0]["alert_deadline"]
+        if last_deadline and _day(last_deadline) != _day(iso(deadline)):
+            return True
+        scores = [row["alert_score"] for row in sent if row["alert_score"] is not None]
+        if not scores:
+            return False
+        return score >= max(scores) + SIGNIFICANT_SCORE_GAIN
+
+    def record_notification(self, tender_id: int, version_hash: str, status: str, recipients: list[str],
+                            error: str | None = None, deadline: datetime | None = None, score: int = 0) -> None:
+        with closing(self.connect()) as conn:
+            conn.execute("""INSERT INTO notifications(tender_id,version_hash,status,recipients,error,sent_at,alert_deadline,alert_score)
+                VALUES(?,?,?,?,?,?,?,?)
                 ON CONFLICT(tender_id,version_hash) DO UPDATE SET status=excluded.status, recipients=excluded.recipients,
-                error=excluded.error, sent_at=excluded.sent_at""",
-                (tender_id, version_hash, status, ", ".join(recipients), error, _now())); conn.commit()
+                error=excluded.error, sent_at=excluded.sent_at, alert_deadline=excluded.alert_deadline,
+                alert_score=excluded.alert_score""",
+                (tender_id, version_hash, status, ", ".join(recipients), error, _now(), iso(deadline), score)); conn.commit()
 
     def clear_notifications(self) -> int:
         """Oublie les alertes déjà envoyées.
@@ -210,6 +246,10 @@ def version_hash(item: ScoredTender) -> str:
     t = item.tender
     return fingerprint([t.title, t.buyer, t.description, ",".join(sorted(t.cpvs)), iso(t.published_at) or "", iso(t.deadline_at) or "",
                         t.location, str(t.estimate_eur), t.rooms_or_nights, ",".join(t.documents)])
+
+
+def _day(value: str | None) -> str:
+    return (value or "")[:10]
 
 
 def _now() -> str: return datetime.now(timezone.utc).isoformat()
