@@ -22,7 +22,6 @@ def default_targeting() -> dict[str, list[str]]:
         "exclusions": list(defaults.EXCLUSIONS),
         "decisive_services": list(defaults.DECISIVE_SERVICES),
         "primary_cpvs": list(defaults.PRIMARY_CPVS),
-        "secondary_cpvs": list(defaults.SECONDARY_CPVS),
     }
 
 
@@ -35,11 +34,11 @@ def score(tender: Tender, settings: dict, hotels: list[dict], targeting: dict | 
     hits = _hits(text, rules["hotel_keywords"])
     service_hits = _hits(text, rules["service_keywords"])
     primary_cpv = _matching_cpvs(tender.cpvs, rules["primary_cpvs"])
-    secondary_cpv = _matching_cpvs(tender.cpvs, rules["secondary_cpvs"])
     broad = {normalized(term) for term in rules["broad_terms"]}
     specific = [hit for hit in hits if normalized(hit) not in broad]
     institutional = _institutional(text, rules["exclusions"])
 
+    # Hors des CPV du brief, seul le contenu (intitulés hôteliers) qualifie l'annonce.
     commercial_match = bool(primary_cpv) or bool(specific) or (
         bool(hits) and not institutional
     ) or _service_combo(service_hits, text, rules["decisive_services"])
@@ -52,8 +51,6 @@ def score(tender: Tender, settings: dict, hotels: list[dict], targeting: dict | 
         factor, proof = 1.0, ", ".join(specific[:3])
     elif specific:
         factor, proof = 0.75, specific[0]
-    elif secondary_cpv:
-        factor, proof = 0.5, f"CPV secondaire {', '.join(secondary_cpv)}"
     elif hits:
         factor, proof = 0.4, f"terme générique : {hits[0]}"
     else:
@@ -112,7 +109,7 @@ def score(tender: Tender, settings: dict, hotels: list[dict], targeting: dict | 
     # Lorsque la détection ne repose que sur un terme générique (« hôtel » seul, sans
     # code CPV ni expression spécifique), les autres critères ne doivent pas porter
     # l'annonce au-dessus du seuil à eux seuls : l'annonce reste visible, moins haut.
-    generic_only = commercial_match and not primary_cpv and not specific and not secondary_cpv
+    generic_only = commercial_match and not primary_cpv and not specific
     if generic_only:
         for line in lines[1:]:
             if line.points: line.points = round(line.points / 2)
@@ -121,7 +118,7 @@ def score(tender: Tender, settings: dict, hotels: list[dict], targeting: dict | 
     total = min(100, sum(line.points for line in lines))
     reasons = [f"{line.points}/{line.maximum} {line.label}: {line.detail}" for line in lines if line.points]
     if institutional and not primary_cpv:
-        reasons.append("Mention institutionnelle détectée (« hôtel de ville ») — non retenue comme opportunité")
+        reasons.append("Mention exclue détectée (« hôtel de ville », camping…) — non retenue comme opportunité")
     if not reasons:
         reasons = ["À qualifier — aucune correspondance forte détectée"]
     return ScoredTender(tender=tender, score=total, reasons=reasons,

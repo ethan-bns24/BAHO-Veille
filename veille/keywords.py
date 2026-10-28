@@ -6,33 +6,14 @@ ajustements faits depuis le tableau de bord les remplacent sans toucher au code.
 
 from __future__ import annotations
 
-# Codes CPV du brief : correspondance directe avec le coeur de métier BAHO.
+# Codes CPV du brief : seuls codes retenus. Une annonce sous un autre code (camping,
+# restauration…) n'est retenue que si son contenu correspond à ces intitulés.
 PRIMARY_CPVS: tuple[str, ...] = (
     "55100000",  # Services d'hôtellerie
     "55110000",  # Services d'hébergement hôtelier
     "55120000",  # Réunions et conférences organisées dans des hôtels
     "55130000",  # Autres services d'hôtellerie
     "55270000",  # Chambres avec petit-déjeuner
-)
-
-# Codes CPV périphériques : pertinents mais non décisifs (demi-pondération).
-SECONDARY_CPVS: tuple[str, ...] = (
-    "55000000",  # Services d'hôtellerie, de restauration et de commerce au détail
-    "55200000",  # Terrains de camping et autres hébergements non hôteliers
-    "55210000",  # Services d'auberges de jeunesse
-    "55240000",  # Centres et villages de vacances
-    "55250000",  # Location de logements de courte durée
-    "55300000",  # Services de restaurant et services de personnel en salle
-    "55310000",  # Services de restaurant
-    "55320000",  # Services de distribution de repas
-    "55520000",  # Services traiteur
-    "55900000",  # Services de commerce au détail
-    "60000000",  # Transport (déplacements de délégations groupées)
-    "63510000",  # Services d'agences de voyages
-    "79951000",  # Organisation de séminaires
-    "79952000",  # Services d'organisation d'événements
-    "79952100",  # Organisation d'événements culturels
-    "98341000",  # Services d'hébergement
 )
 
 HOTEL_KEYWORDS: tuple[str, ...] = (
@@ -67,13 +48,15 @@ SERVICE_KEYWORDS: tuple[str, ...] = (
 # Un terme générique seul ne doit jamais déclencher une alerte.
 BROAD_TERMS: tuple[str, ...] = ("hôtel", "hôtels", "hôtellerie", "séjour", "séjours", "séminaire", "séminaires")
 
-# Emplois institutionnels du mot « hôtel » : historisés, jamais alertés.
+# Emplois institutionnels du mot « hôtel » et hébergements non hôteliers : historisés, jamais alertés.
 EXCLUSIONS: tuple[str, ...] = (
     "hotel de ville", "hotel de la ville", "hotel de police", "hotel de region",
     "hotel du departement", "hotel de la marine", "hotel de la guerre", "hotel des impots",
     "hotel communautaire", "hotel d agglomeration", "hotel des ventes", "hotel dieu",
     "hotel particulier", "ecole hoteliere", "lycee hotelier", "hotel de prefecture",
     "hotel du parlement", "hotel des postes",
+    # Hébergements non hôteliers : hors des intitulés CPV du brief.
+    "camping", "campings", "mobil home", "village de vacances", "auberge de jeunesse",
 )
 
 # Expressions qui, à elles seules, qualifient une opportunité hôtelière.

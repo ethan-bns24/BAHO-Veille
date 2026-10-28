@@ -36,7 +36,6 @@ LIST_KEYS: dict[str, str] = {
     "targeting.exclusions": "Exclusions (« hôtel de ville »…)",
     "targeting.decisive_services": "Prestations décisives",
     "targeting.primary_cpvs": "Codes CPV prioritaires",
-    "targeting.secondary_cpvs": "Codes CPV secondaires",
     "targeting.search_terms": "Termes interrogés côté serveur",
 }
 
@@ -73,7 +72,6 @@ class Settings:
             "exclusions": list(defaults.EXCLUSIONS),
             "decisive_services": list(defaults.DECISIVE_SERVICES),
             "primary_cpvs": list(defaults.PRIMARY_CPVS),
-            "secondary_cpvs": list(defaults.SECONDARY_CPVS),
             "search_terms": list(DEFAULT_SEARCH_TERMS),
         }
         base.update(self.data.get("targeting", {}))

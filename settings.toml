@@ -245,10 +245,7 @@ kind = "ted"
 enabled = true
 limit = 300
 countries = ["FRA"]
-cpvs = [
-  "55100000", "55110000", "55120000", "55130000", "55270000",
-  "55200000", "55240000", "55250000", "98341000",
-]
+cpvs = ["55100000", "55110000", "55120000", "55130000", "55270000"]
 title_terms = [
   "hébergement", "hôtelier", "hôtelière", "hôtellerie", "nuitées", "chambres",
   "séminaire", "colloque", "congrès", "mise à l'abri",
