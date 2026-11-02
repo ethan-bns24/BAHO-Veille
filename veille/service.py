@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from .config import Settings, load_settings
 from .connectors import CONNECTORS, Connector, ConnectorError
 from .database import Database, version_hash
+from .geo import in_regions, regions_of
 from .notify import send
 from .scoring import score
 from .text import normalized
@@ -40,8 +41,12 @@ class WatchService:
         settings = self.refresh_settings()
         since = datetime.now(timezone.utc) - timedelta(days=int(settings.app["lookback_days"]))
         summary = {"sources": 0, "fetched": 0, "created": 0, "updated": 0, "alerts_sent": 0,
-                   "alerts_deferred": 0, "errors": 0}
+                   "alerts_deferred": 0, "out_of_region": 0, "errors": 0}
         targeting = settings.targeting
+        # Seules les régions où BAHO a un établissement intéressent le commercial :
+        # Corse, outre-mer ou Hauts-de-France ne sont ni stockés ni alertés.
+        regions = regions_of(hotel.get("department", "") for hotel in settings.hotels)
+        summary["out_of_region"] += self.db.purge(lambda department, location: in_regions(department, location, regions))
         pacing = _Pacing(settings)
         for source in settings.sources:
             if not source.get("enabled", False): continue
@@ -56,6 +61,9 @@ class WatchService:
                 continue
             summary["fetched"] += len(batch)
             for tender in _latest_per_source_reference(batch):
+                if not in_regions(tender.department, tender.location, regions):
+                    summary["out_of_region"] += 1
+                    continue
                 item = score(tender, settings.scoring, settings.hotels, targeting)
                 result = self.db.upsert(item)
                 if result.event in ("created", "updated"): summary[result.event] += 1

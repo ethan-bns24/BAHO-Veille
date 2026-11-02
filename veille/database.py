@@ -191,6 +191,19 @@ class Database:
             conn.commit()
         return removed
 
+    def purge(self, keep) -> int:
+        """Supprime les annonces que `keep(department, location)` écarte, avec leurs liens et alertes."""
+        with closing(self.connect()) as conn:
+            rows = conn.execute("SELECT id, department, location FROM tenders").fetchall()
+            doomed = [(row["id"],) for row in rows if not keep(row["department"] or "", row["location"] or "")]
+            if doomed:
+                conn.executemany("DELETE FROM tenders WHERE id=?", doomed)
+                conn.execute("INSERT INTO events(tender_id,source,level,kind,message,created_at) VALUES(?,?,?,?,?,?)",
+                             (None, "veille", "INFO", "out_of_region",
+                              f"{len(doomed)} annonce(s) hors des régions BAHO retirée(s)", _now()))
+            conn.commit()
+        return len(doomed)
+
     def dashboard(self, limit: int = 200, minimum_score: int = 35) -> dict:
         with closing(self.connect()) as conn:
             rows = conn.execute("""SELECT t.*, GROUP_CONCAT(DISTINCT s.source) AS source_names,

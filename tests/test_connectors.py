@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from veille.connectors.feed import FeedConnector
 from veille.connectors.ted import TedConnector
-from veille.geo import department_from_nuts, department_from_postcode
+from veille.geo import department_from_nuts, department_from_postcode, in_regions, regions_of
 
 SINCE = datetime(2020, 1, 1, tzinfo=timezone.utc)
 
@@ -94,6 +94,15 @@ class GeoTests(unittest.TestCase):
     def test_unknown_codes_are_empty_rather_than_wrong(self):
         self.assertEqual("", department_from_nuts("DE123"))
         self.assertEqual("", department_from_postcode("x"))
+
+    def test_only_regions_with_a_baho_hotel_are_kept(self):
+        allowed = regions_of(["89", "13", "76"])
+        self.assertTrue(in_regions("6", "", allowed))            # PACA, code mal formaté
+        self.assertTrue(in_regions("59, 76", "", allowed))       # une région sur deux suffit
+        self.assertFalse(in_regions("20A", "Ajaccio", allowed))  # Corse
+        self.assertFalse(in_regions("974", "", allowed))         # DROM
+        self.assertFalse(in_regions("", "Bastia, FRM0", allowed))
+        self.assertTrue(in_regions("", "Non renseigné", allowed))  # lieu inconnu : conservé
 
 
 if __name__ == "__main__":

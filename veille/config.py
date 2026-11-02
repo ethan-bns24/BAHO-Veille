@@ -42,7 +42,7 @@ LIST_KEYS: dict[str, str] = {
 # Termes envoyés aux API pour ratisser large ; le scoring tranche ensuite.
 DEFAULT_SEARCH_TERMS: tuple[str, ...] = (
     "hôtel", "hôtellerie", "hébergement", "nuitée", "nuitées", "chambres", "séminaire",
-    "congrès", "convention", "colloque", "restauration", "réservation", "séjour",
+    "convention", "restauration", "réservation", "séjour",
     "mise à l'abri", "demi-pension", "pension complète", "traiteur", "petit-déjeuner",
 )
 

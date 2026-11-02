@@ -37,11 +37,11 @@ HOTEL_KEYWORDS: tuple[str, ...] = (
 
 SERVICE_KEYWORDS: tuple[str, ...] = (
     "séminaire résidentiel", "séminaire", "séminaires", "journée d'étude", "journées d'étude",
-    "salle de réunion", "salles de réunion", "location de salles", "congressiste", "congressistes",
-    "congrès", "convention", "conventions", "réunion institutionnelle", "forfait hébergement",
+    "salle de réunion", "salles de réunion", "location de salles",
+    "convention", "conventions", "réunion institutionnelle", "forfait hébergement",
     "petit-déjeuner", "petit déjeuner", "restauration de groupe", "restauration pour groupes",
     "demi-pension", "pension complète", "traiteur", "hébergement et restauration",
-    "colloque", "colloques", "assemblée générale", "team building", "séance plénière",
+    "assemblée générale", "team building", "séance plénière",
     "pause gourmande", "pauses café", "plateau-repas", "salle de séminaire", "espace de réception",
 )
 
@@ -61,7 +61,7 @@ EXCLUSIONS: tuple[str, ...] = (
 
 # Expressions qui, à elles seules, qualifient une opportunité hôtelière.
 DECISIVE_SERVICES: tuple[str, ...] = (
-    "séminaire résidentiel", "congressiste", "congressistes", "forfait hébergement",
+    "séminaire résidentiel", "forfait hébergement",
     "hébergement et restauration", "demi-pension", "pension complète",
 )
 

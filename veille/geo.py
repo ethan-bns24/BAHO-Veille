@@ -7,6 +7,8 @@ aux sources européennes (TED) qui ne publient que le code NUTS du lieu d'exécu
 
 from __future__ import annotations
 
+import re
+
 NUTS3_TO_DEPARTMENT: dict[str, str] = {
     "FR101": "75", "FR102": "77", "FR103": "78", "FR104": "91", "FR105": "92", "FR106": "93",
     "FR107": "94", "FR108": "95", "FRB01": "18", "FRB02": "28", "FRB03": "36", "FRB04": "37",
@@ -54,3 +56,70 @@ def departments_from_nuts(codes: list[str]) -> list[str]:
         if department and department not in found:
             found.append(department)
     return found
+
+
+# Régions administratives (découpage 2016). Sert à ne retenir que les annonces situées
+# dans une région où BAHO exploite au moins un établissement.
+REGION_DEPARTMENTS: dict[str, tuple[str, ...]] = {
+    "Auvergne-Rhône-Alpes": ("01", "03", "07", "15", "26", "38", "42", "43", "63", "69", "73", "74"),
+    "Bourgogne-Franche-Comté": ("21", "25", "39", "58", "70", "71", "89", "90"),
+    "Bretagne": ("22", "29", "35", "56"),
+    "Centre-Val de Loire": ("18", "28", "36", "37", "41", "45"),
+    "Corse": ("2A", "2B", "20"),
+    "Grand Est": ("08", "10", "51", "52", "54", "55", "57", "67", "68", "88"),
+    "Hauts-de-France": ("02", "59", "60", "62", "80"),
+    "Île-de-France": ("75", "77", "78", "91", "92", "93", "94", "95"),
+    "Normandie": ("14", "27", "50", "61", "76"),
+    "Nouvelle-Aquitaine": ("16", "17", "19", "23", "24", "33", "40", "47", "64", "79", "86", "87"),
+    "Occitanie": ("09", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82"),
+    "Pays de la Loire": ("44", "49", "53", "72", "85"),
+    "Provence-Alpes-Côte d'Azur": ("04", "05", "06", "13", "83", "84"),
+    "Outre-mer": OVERSEAS_PREFIXES,
+}
+DEPARTMENT_REGION: dict[str, str] = {
+    department: region for region, departments in REGION_DEPARTMENTS.items() for department in departments
+}
+
+# TED publie parfois un NUTS de niveau région (« FRM0 », « FRY1 ») sans département.
+NUTS_PREFIX_REGION: dict[str, str] = {
+    "FR1": "Île-de-France", "FRB": "Centre-Val de Loire", "FRC": "Bourgogne-Franche-Comté",
+    "FRD": "Normandie", "FRE": "Hauts-de-France", "FRF": "Grand Est", "FRG": "Pays de la Loire",
+    "FRH": "Bretagne", "FRI": "Nouvelle-Aquitaine", "FRJ": "Occitanie", "FRK": "Auvergne-Rhône-Alpes",
+    "FRL": "Provence-Alpes-Côte d'Azur", "FRM": "Corse", "FRY": "Outre-mer",
+}
+NUTS_PATTERN = re.compile(r"\bFR[0-9A-Z]{1,3}\b")
+
+
+def normalize_department(code: str) -> str:
+    """« 6 » -> « 06 », « 20A » -> « 2A » : les sources ne formatent pas le code pareil."""
+    value = str(code).strip().upper()
+    if value in ("20A", "20B"): return "2" + value[-1]
+    if value.isdigit() and len(value) == 1: return value.zfill(2)
+    return value
+
+
+def region_of_department(code: str) -> str:
+    return DEPARTMENT_REGION.get(normalize_department(code), "")
+
+
+def regions_of(departments) -> set[str]:
+    return {region for code in departments if (region := region_of_department(code))}
+
+
+def tender_regions(department: str, location: str = "") -> set[str]:
+    """Régions citées par une annonce, d'après ses départements ou, à défaut, ses codes NUTS."""
+    found = regions_of(part for part in str(department).split(",") if part.strip())
+    if not found:
+        found = {NUTS_PREFIX_REGION[code[:3]] for code in NUTS_PATTERN.findall(str(location).upper())
+                 if code[:3] in NUTS_PREFIX_REGION}
+    return found
+
+
+def in_regions(department: str, location: str, allowed: set[str]) -> bool:
+    """Vrai si l'annonce touche une région autorisée.
+
+    Un lieu non publié ne vaut pas exclusion : l'annonce est conservée et qualifiée.
+    """
+    if not allowed: return True
+    found = tender_regions(department, location)
+    return not found or bool(found & allowed)
